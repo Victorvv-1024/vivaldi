@@ -135,7 +135,7 @@ names:
   133: tupletBracket
   134: staff
   135: ottavaBracket
-path: /home/cat/projects/musicScanner/dataset/deepscore_sliced
+path: /Users/haodiweng/Desktop/musicScanner/dataset/deepscore_sliced
 test: test.txt
 train: train.txt
 val: val.txt

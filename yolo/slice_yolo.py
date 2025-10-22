@@ -4,6 +4,10 @@ from sahi.utils.shapely import ShapelyAnnotation, box
 
 import os
 from pathlib import Path
+from tqdm import tqdm
+
+
+print("Starting slicing script...")
 
 ds_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), 'dataset', 'deepscore')
 
@@ -20,16 +24,53 @@ def convert_coco_to_yolo_boxes(coco_box, w, h):
     return f"{new_center_x:.5f} {new_center_y:.5f} {new_width:.5f} {new_height:.5f}"
 
 def slice_yolo_ds(input_dir, output_dir, imgsz, min_area_ratio=0.1):
-    os.makedirs(os.path.join(output_dir, 'labels'), exist_ok=True)  # create labels dir
-    image_list = os.listdir(os.path.join(input_dir, 'images'))
-    for image in image_list:
-        # print(image)
-        in_f_name = os.path.join(input_dir, 'images', image)
-        out_f_name = os.path.join(output_dir, 'images', image)
+    print(f"Preparing slice for input_dir={input_dir}, output_dir={output_dir}")
+    images_dir = Path(input_dir) / 'images'
+    labels_dir = Path(output_dir) / 'labels'
+    images_out_dir = Path(output_dir) / 'images'
+    os.makedirs(labels_dir, exist_ok=True)  # create labels dir
+    os.makedirs(images_out_dir, exist_ok=True)
+
+    # collect already processed image stems to avoid repeated globbing
+    existing_slices = set()
+    if labels_dir.exists():
+        for label_path in labels_dir.glob("*.txt"):
+            name = label_path.name
+            base = name.split(".png", 1)[0] if ".png" in name else label_path.stem
+            existing_slices.add(base)
+    print(f"Existing slice files found for {len(existing_slices)} images.")
+
+    image_names = sorted(os.listdir(images_dir))
+    to_process = []
+    print(f"Total images found: {len(image_names)}")
+    for image in image_names:
+        base = image.split(".png", 1)[0] if ".png" in image else Path(image).stem
+        if base in existing_slices:
+            continue
+        to_process.append(image)
+
+    print(f"Images queued for slicing: {len(to_process)}")
+    if not to_process:
+        print("No new images to process; using existing slices.")
+
+    for image in tqdm(to_process, desc="Slicing images", unit="img", disable=not to_process):
+        image_stem = Path(image).stem
+        in_f_name = images_dir / image
+        out_f_name = Path(output_dir) / 'images' / image
         # print(out_f_name)
-        l_f_name = os.path.join(input_dir, 'labels', Path(image).stem + ".txt")
-        # print(l_f_name)
-        result = slice_image(in_f_name, output_dir=os.path.join(output_dir, 'images'), output_file_name=out_f_name, slice_height=imgsz, slice_width=imgsz)
+        l_f_name = os.path.join(input_dir, 'labels', image_stem + ".txt")
+        if not os.path.exists(l_f_name):
+            continue  # nothing to slice if labels are missing
+
+        result = slice_image(
+            str(in_f_name),
+            output_dir=str(images_out_dir),
+            output_file_name=str(out_f_name),
+            slice_height=imgsz,
+            slice_width=imgsz,
+            overlap_height_ratio=0.2,
+            overlap_width_ratio=0.2,
+        )
         with open(l_f_name, 'r') as f:
             annotations = f.readlines()
         width, height = result.original_image_width, result.original_image_height

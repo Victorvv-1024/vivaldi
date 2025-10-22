@@ -7,7 +7,13 @@ print(torch.__version__)
 print(torch.version.cuda)
 
 print(torch.cuda.is_available())
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
+if torch.backends.mps.is_available():
+    device = 'mps'
+elif torch.cuda.is_available():
+    device = 'cuda'
+else:
+    device = 'cpu'
+print(f"Using device: {device}")
 
 imgsz = 640
 
@@ -45,16 +51,25 @@ from ultralytics.utils import LOGGER, colorstr
 # model_last_weights = "yolov8s-worldv2.pt"
 # model = YOLOv10.from_pretrained('jameslahm/yolov10n').to(device)
 # for other usages past here the path to the last training
-train_num = 'train24'
-model_weights = '/home/cat/projects/musicScanner/runs/detect/'+train_num+'/weights/best.pt'
-model = YOLOv10(model_weights).to(device)
-
 
 cur_dir = os.path.dirname(os.path.realpath(__file__))
+model_config = os.path.join(cur_dir, '..', 'yolov10', 'ultralytics', 'cfg', 'models', 'v10', 'yolov10n.yaml')
+model_config = os.path.abspath(model_config)
+print(f"Using model config: {model_config}")
+model = YOLOv10(model_config).to(device)
+
 
 # results = model.train(data=os.path.join(cur_dir, 'deepscore.yaml'), cfg=os.path.join(cur_dir, 'config.yaml'), augment = True, epochs=50, time=2.0)
 
-results = model.train(data=os.path.join(cur_dir, 'deepscore_sliced.yaml'), cfg=os.path.join(cur_dir, 'config.yaml'), epochs=20, time=4.0)
+results = model.train(
+    data=os.path.join(cur_dir, 'deepscore_sliced.yaml'),
+    cfg=os.path.join(cur_dir, 'config.yaml'),
+    epochs=200,
+    patience=10,
+    fraction=0.001,
+    batch=4,
+    device=device,
+)
 
 
 # dfl_loss, it stands for "distribution focal loss", 
@@ -98,4 +113,3 @@ results = model.train(data=os.path.join(cur_dir, 'deepscore_sliced.yaml'), cfg=o
 # [
 # \text{DFL_oo} = -\alpha_t (1 - p_t)^\gamma \log(p_t)
 # ]
-
