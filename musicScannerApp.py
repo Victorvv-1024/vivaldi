@@ -186,10 +186,6 @@ def main():
     show_results(display_opts)
 
 
-if __name__ == "__main__":
-    main()
-
-
 def _render_custom_class_form():
     with st.sidebar.expander("Add custom symbol category"):
         new_label = st.text_input("Label", key="new_class_label")
@@ -352,3 +348,7 @@ def _render_pdf_download(pages: List[Tuple[str, np.ndarray]]):
         mime="application/pdf",
         key="download_all_pdf",
     )
+
+
+if __name__ == "__main__":
+    main()
