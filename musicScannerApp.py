@@ -63,6 +63,8 @@ import scanner.detection as detector
 import scanner.utils as utils
 from scanner.detection import DEFAULT_COLOR_PALETTE
 
+IGNORE_COLOR_CLASSES = {"staff"}
+
 st.set_page_config(
     page_title="Music sheet scanner",
     layout="wide",
@@ -369,6 +371,8 @@ def _generate_colored_sheet(
     kernel = np.ones((3, 3), np.uint8)
 
     for prediction in predictions:
+        if prediction.category.name and prediction.category.name.lower() in IGNORE_COLOR_CLASSES:
+            continue
         color = _hex_to_rgb_tuple(color_map.get(prediction.category.name))
         if color is None:
             continue
