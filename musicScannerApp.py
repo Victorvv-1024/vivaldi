@@ -6,6 +6,18 @@ import numpy as np
 import streamlit as st
 from PIL import Image
 from sahi.prediction import ObjectPrediction
+
+# Compatibility shim for streamlit_drawable_canvas on Streamlit >= 1.50
+try:
+    from streamlit.elements import image as _st_image_mod
+    from streamlit.elements.lib import image_utils as _st_image_utils
+
+    for attr in ("image_to_url", "AtomicImage", "ImageFormatOrAuto"):
+        if hasattr(_st_image_utils, attr) and not hasattr(_st_image_mod, attr):
+            setattr(_st_image_mod, attr, getattr(_st_image_utils, attr))
+except Exception:
+    pass
+
 from streamlit_drawable_canvas import st_canvas
 
 import scanner.detection as detector
@@ -148,7 +160,7 @@ def show_results(display_opts):
             fill_alpha=display_opts["fill_alpha"],
         )
         st.markdown(f"**{entry['label']}**")
-        st.image(colored, use_column_width=True)
+        st.image(colored, use_container_width=True)
         st.session_state.colored_outputs[entry["label"]] = colored
         download_candidates.append((entry["label"], colored))
         _render_download_button(entry["label"], colored)
