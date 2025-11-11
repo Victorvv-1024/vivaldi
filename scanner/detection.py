@@ -1,4 +1,4 @@
-from sahi.predict import get_sliced_prediction
+from sahi.predict import get_prediction, get_sliced_prediction
 from sahi.prediction import PredictionResult, ObjectPrediction
 from sahi.postprocess.combine import GreedyNMMPostprocess
 from sahi.utils.cv import visualize_object_predictions
@@ -8,7 +8,7 @@ import torch
 import numpy as np
 import os
 from functools import cmp_to_key
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 from PIL import Image, ImageDraw, ImageFont
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -43,6 +43,29 @@ def detect_everything(
         postprocess_match_metric="IOS",
         postprocess_match_threshold=0.1,
     )
+
+
+def debug_tile_predictions(
+    source: np.ndarray,
+    tile_size: int = 640,
+    overlap_ratio: float = 0.2,
+) -> List[Dict[str, np.ndarray]]:
+    tiles = _generate_tiles(source, tile_size, overlap_ratio)
+    per_tile = []
+    img_h, img_w = source.shape[:2]
+    for tile_image, (offset_x, offset_y) in tiles:
+        tile_result = get_prediction(
+            tile_image,
+            detection_model,
+            shift_amount=[offset_x, offset_y],
+            full_shape=[img_h, img_w],
+        )
+        local_predictions = _convert_to_local(tile_result.object_prediction_list, offset_x, offset_y, tile_image.shape[:2])
+        per_tile.append({
+            "image": tile_image,
+            "predictions": local_predictions,
+        })
+    return per_tile
 
 DEFAULT_COLOR_PALETTE = [
     "#F94144",
@@ -227,6 +250,60 @@ def slice_image(predicted_image: PredictionResult, divider:str):
                 slice_objects.append(object)
         sliced_images.append({'image': np.asarray(predicted_image.image)[tly:bry, tlx:brx], 'predictions': slice_objects})
     return sliced_images
+
+
+def _convert_to_local(
+    predictions: List[ObjectPrediction],
+    shift_x: int,
+    shift_y: int,
+    tile_shape: Tuple[int, int],
+) -> List[ObjectPrediction]:
+    height, width = tile_shape
+    local_predictions: List[ObjectPrediction] = []
+    for obj in predictions:
+        bbox = obj.bbox
+        minx = max(0, bbox.minx - shift_x)
+        miny = max(0, bbox.miny - shift_y)
+        maxx = min(width, bbox.maxx - shift_x)
+        maxy = min(height, bbox.maxy - shift_y)
+        if maxx <= minx or maxy <= miny:
+            continue
+        local_predictions.append(
+            ObjectPrediction(
+                bbox=[minx, miny, maxx, maxy],
+                category_id=obj.category.id,
+                category_name=obj.category.name,
+                score=obj.score.value,
+            )
+        )
+    return local_predictions
+
+
+def _generate_tiles(
+    image: np.ndarray, tile_size: int, overlap_ratio: float
+) -> List[Tuple[np.ndarray, Tuple[int, int]]]:
+    height, width = image.shape[:2]
+    stride = int(tile_size * (1 - overlap_ratio))
+    stride = max(1, stride)
+    x_positions = _compute_positions(width, tile_size, stride)
+    y_positions = _compute_positions(height, tile_size, stride)
+    tiles = []
+    for top in y_positions:
+        bottom = min(top + tile_size, height)
+        for left in x_positions:
+            right = min(left + tile_size, width)
+            tiles.append((image[top:bottom, left:right], (left, top)))
+    return tiles
+
+
+def _compute_positions(length: int, tile_size: int, stride: int) -> List[int]:
+    if length <= tile_size:
+        return [0]
+    positions = list(range(0, length - tile_size + 1, stride))
+    last_start = length - tile_size
+    if positions[-1] != last_start:
+        positions.append(last_start)
+    return sorted(set(max(0, min(pos, last_start)) for pos in positions))
 
 
 def _visualize_with_custom_colors(

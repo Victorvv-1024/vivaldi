@@ -165,6 +165,10 @@ def build_color_sidebar():
         "Show detection overlay", value=False,
         help="Display bounding boxes for debugging."
     )
+    show_tiles = st.sidebar.checkbox(
+        "Show sliced tiles", value=False,
+        help="Visualize the 640×640 tiles sent to the detector."
+    )
     show_labels = st.sidebar.checkbox(
         "Show category labels on sheet", value=False, help="Adds text boxes per symbol."
     )
@@ -175,7 +179,12 @@ def build_color_sidebar():
         updated_colors[cls] = st.sidebar.color_picker(cls, default_color)
 
     st.session_state.class_colors = updated_colors
-    return {"fill_alpha": opacity, "show_labels": show_labels, "show_overlay": show_overlay}
+    return {
+        "fill_alpha": opacity,
+        "show_labels": show_labels,
+        "show_overlay": show_overlay,
+        "show_tiles": show_tiles,
+    }
 
 
 def show_results(display_opts):
@@ -214,6 +223,8 @@ def show_results(display_opts):
                 fill_alpha=display_opts["fill_alpha"],
             )
             st.image(overlay, use_container_width=True, caption="Detection overlay")
+        if display_opts.get("show_tiles"):
+            _render_tile_debug(entry["label"], image_array, color_map)
         _render_annotation_panel(entry, color_map)
         _show_class_counts(prediction.object_prediction_list)
         st.divider()
@@ -353,6 +364,24 @@ def _render_annotation_panel(entry, color_map):
             if st.button("Clear manual annotations", key=f"clear_{label}"):
                 st.session_state.manual_annotations[label] = []
                 st.info("Cleared manual annotations for this page.")
+
+
+def _render_tile_debug(label: str, image_array: np.ndarray, color_map: Optional[Dict[str, str]]):
+    tiles = detector.debug_tile_predictions(image_array)
+    if not tiles:
+        return
+    with st.expander(f"Sliced tiles for {label}"):
+        for idx, tile in enumerate(tiles, 1):
+            vis = detector.visualize_predictions(
+                tile["image"],
+                tile["predictions"],
+                class_colors=color_map,
+                hide_labels=True,
+                hide_conf=True,
+                rect_th=2,
+                fill_alpha=0.25,
+            )
+            st.image(vis, use_container_width=True, caption=f"Tile {idx}")
 
 
 def _generate_colored_sheet(
