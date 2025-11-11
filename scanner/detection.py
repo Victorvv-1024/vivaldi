@@ -247,7 +247,7 @@ def _visualize_with_custom_colors(
     base_image = Image.fromarray(np.ascontiguousarray(image)).convert("RGBA")
     overlay = Image.new("RGBA", base_image.size, (0, 0, 0, 0))
     overlay_draw = ImageDraw.Draw(overlay)
-    outline_width = rect_th if rect_th else 2
+    outline_width = rect_th if rect_th and rect_th > 0 else 0
 
     for prediction in prediction_list:
         color = _color_for_class(prediction.category.name, class_colors)
@@ -262,7 +262,8 @@ def _visualize_with_custom_colors(
     for prediction in prediction_list:
         color = _color_for_class(prediction.category.name, class_colors)
         x1, y1, x2, y2 = map(int, prediction.bbox.to_xyxy())
-        draw.rectangle([x1, y1, x2, y2], outline=(*color, 255), width=outline_width)
+        if outline_width > 0:
+            draw.rectangle([x1, y1, x2, y2], outline=(*color, 255), width=outline_width)
 
         if not hide_labels:
             label = prediction.category.name
