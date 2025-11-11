@@ -1,4 +1,4 @@
-from sahi.predict import get_prediction, get_sliced_prediction
+from sahi.predict import get_sliced_prediction
 from sahi.prediction import PredictionResult, ObjectPrediction
 from sahi.postprocess.combine import GreedyNMMPostprocess
 from sahi.utils.cv import visualize_object_predictions
@@ -8,7 +8,7 @@ import torch
 import numpy as np
 import os
 from functools import cmp_to_key
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 from PIL import Image, ImageDraw, ImageFont
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -21,9 +21,6 @@ detection_model = Yolov10DetectionModel(
     device="cuda:0", # 'cpu' or 'cuda:0'
 )
 
-TILE_SIZE = 1280
-TILE_OVERLAP = 0.2
-
 def detect_everything(
     source: np.array
 ):
@@ -35,14 +32,17 @@ def detect_everything(
     Returns:
         PredictionResult: image and prediction_list
     """
-    if max(source.shape[:2]) <= TILE_SIZE:
-        return get_prediction(
-            source,
-            detection_model,
-            full_shape=[source.shape[0], source.shape[1]],
-        )
-
-    return detect_with_tiling(source)
+    return get_sliced_prediction(
+        source,
+        detection_model,
+        slice_height=640,
+        slice_width=640,
+        overlap_height_ratio=0.2,
+        overlap_width_ratio=0.2,
+        postprocess_type="NMM",
+        postprocess_match_metric="IOS",
+        postprocess_match_threshold=0.1,
+    )
 
 DEFAULT_COLOR_PALETTE = [
     "#F94144",
@@ -227,70 +227,6 @@ def slice_image(predicted_image: PredictionResult, divider:str):
                 slice_objects.append(object)
         sliced_images.append({'image': np.asarray(predicted_image.image)[tly:bry, tlx:brx], 'predictions': slice_objects})
     return sliced_images
-
-
-def detect_with_tiling(
-    source: np.ndarray,
-    tile_size: int = TILE_SIZE,
-    overlap_ratio: float = TILE_OVERLAP,
-) -> PredictionResult:
-    image_height, image_width = source.shape[:2]
-    tiles = _generate_tiles(source, tile_size, overlap_ratio)
-    combined_predictions: List[ObjectPrediction] = []
-
-    for tile_image, (offset_x, offset_y) in tiles:
-        tile_result = get_prediction(
-            tile_image,
-            detection_model,
-            shift_amount=[offset_x, offset_y],
-            full_shape=[image_height, image_width],
-        )
-        combined_predictions.extend(tile_result.object_prediction_list)
-
-    if combined_predictions:
-        combined_predictions = postprocess(
-            combined_predictions,
-            match_threshold=0.2,
-            match_metric="IOU",
-            class_agnostic=False,
-        )
-
-    return PredictionResult(
-        object_prediction_list=combined_predictions,
-        image=source,
-    )
-
-
-def _generate_tiles(
-    image: np.ndarray, tile_size: int, overlap_ratio: float
-) -> List[Tuple[np.ndarray, Tuple[int, int]]]:
-    height, width = image.shape[:2]
-    if tile_size <= 0:
-        raise ValueError("tile_size must be positive.")
-    stride = int(tile_size * (1 - overlap_ratio))
-    stride = max(1, stride)
-
-    x_positions = _compute_positions(width, tile_size, stride)
-    y_positions = _compute_positions(height, tile_size, stride)
-
-    tiles = []
-    for top in y_positions:
-        bottom = min(top + tile_size, height)
-        for left in x_positions:
-            right = min(left + tile_size, width)
-            tiles.append((image[top:bottom, left:right], (left, top)))
-    return tiles
-
-
-def _compute_positions(length: int, tile_size: int, stride: int) -> List[int]:
-    if length <= tile_size:
-        return [0]
-    positions = list(range(0, length - tile_size + 1, stride))
-    last_start = length - tile_size
-    if positions[-1] != last_start:
-        positions.append(last_start)
-    # ensure unique and sorted
-    return sorted(set(max(0, min(pos, last_start)) for pos in positions))
 
 
 def _visualize_with_custom_colors(

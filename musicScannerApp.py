@@ -5,6 +5,7 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import streamlit as st
 from PIL import Image
+import cv2
 from sahi.prediction import ObjectPrediction
 
 # Compatibility shim for streamlit_drawable_canvas on Streamlit >= 1.50
@@ -365,6 +366,8 @@ def _generate_colored_sheet(
     base = Image.fromarray(image_array).convert("RGB")
     coloured = base.copy()
 
+    kernel = np.ones((3, 3), np.uint8)
+
     for prediction in predictions:
         color = _hex_to_rgb_tuple(color_map.get(prediction.category.name))
         if color is None:
@@ -372,10 +375,23 @@ def _generate_colored_sheet(
         x1, y1, x2, y2 = map(int, prediction.bbox.to_xyxy())
         if x2 <= x1 or y2 <= y1:
             continue
+
         region = coloured.crop((x1, y1, x2, y2))
+        region_rgb = region.convert("RGB")
+        gray = np.array(region.convert("L"))
+        inv = 255 - gray
+        _, mask = cv2.threshold(
+            inv, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU
+        )
+        mask = cv2.erode(mask, kernel, iterations=1)
+        if mask.max() == 0:
+            continue
+
+        mask_img = Image.fromarray(mask).convert("L")
         tint = Image.new("RGB", region.size, color)
-        blended = Image.blend(region, tint, alpha)
-        coloured.paste(blended, (x1, y1))
+        blended = Image.blend(region_rgb, tint, alpha)
+        result_region = Image.composite(blended, region_rgb, mask_img)
+        coloured.paste(result_region, (x1, y1))
 
     return np.array(coloured)
 
