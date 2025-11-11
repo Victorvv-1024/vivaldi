@@ -1,6 +1,6 @@
 from collections import Counter
 from io import BytesIO
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import streamlit as st
@@ -158,8 +158,9 @@ def build_color_sidebar():
     opacity = st.sidebar.slider(
         "Fill opacity", min_value=0.05, max_value=0.9, value=0.35, step=0.05
     )
-    hide_outline = st.sidebar.checkbox(
-        "Hide bounding-box outlines", value=False
+    show_overlay = st.sidebar.checkbox(
+        "Show detection overlay", value=False,
+        help="Display bounding boxes for debugging."
     )
     show_labels = st.sidebar.checkbox(
         "Show category labels on sheet", value=False, help="Adds text boxes per symbol."
@@ -171,7 +172,7 @@ def build_color_sidebar():
         updated_colors[cls] = st.sidebar.color_picker(cls, default_color)
 
     st.session_state.class_colors = updated_colors
-    return {"fill_alpha": opacity, "show_labels": show_labels, "hide_outline": hide_outline}
+    return {"fill_alpha": opacity, "show_labels": show_labels, "show_overlay": show_overlay}
 
 
 def show_results(display_opts):
@@ -188,20 +189,28 @@ def show_results(display_opts):
         image_array = np.asarray(prediction.image)
         manual_predictions = _manual_predictions(entry["label"])
         combined_predictions = list(prediction.object_prediction_list) + manual_predictions
-        colored = detector.visualize_predictions(
+        colored = _generate_colored_sheet(
             image_array,
             combined_predictions,
-            class_colors=color_map,
-            hide_labels=not display_opts["show_labels"],
-            hide_conf=True,
-            rect_th=0 if display_opts["hide_outline"] else 3,
-            fill_alpha=display_opts["fill_alpha"],
+            color_map,
+            display_opts["fill_alpha"],
         )
         st.markdown(f"**{entry['label']}**")
         st.image(colored, use_container_width=True)
         st.session_state.colored_outputs[entry["label"]] = colored
         download_candidates.append((entry["label"], colored))
         _render_download_button(entry["label"], colored)
+        if display_opts["show_overlay"]:
+            overlay = detector.visualize_predictions(
+                colored,
+                combined_predictions,
+                class_colors=color_map,
+                hide_labels=not display_opts["show_labels"],
+                hide_conf=True,
+                rect_th=2,
+                fill_alpha=display_opts["fill_alpha"],
+            )
+            st.image(overlay, use_container_width=True, caption="Detection overlay")
         _render_annotation_panel(entry, color_map)
         _show_class_counts(prediction.object_prediction_list)
         st.divider()
@@ -343,6 +352,34 @@ def _render_annotation_panel(entry, color_map):
                 st.info("Cleared manual annotations for this page.")
 
 
+def _generate_colored_sheet(
+    image_array: np.ndarray,
+    predictions,
+    color_map: Optional[Dict[str, str]],
+    alpha: float,
+) -> np.ndarray:
+    if color_map is None or not predictions:
+        return image_array
+
+    alpha = float(min(max(alpha, 0.0), 1.0))
+    base = Image.fromarray(image_array).convert("RGB")
+    coloured = base.copy()
+
+    for prediction in predictions:
+        color = _hex_to_rgb_tuple(color_map.get(prediction.category.name))
+        if color is None:
+            continue
+        x1, y1, x2, y2 = map(int, prediction.bbox.to_xyxy())
+        if x2 <= x1 or y2 <= y1:
+            continue
+        region = coloured.crop((x1, y1, x2, y2))
+        tint = Image.new("RGB", region.size, color)
+        blended = Image.blend(region, tint, alpha)
+        coloured.paste(blended, (x1, y1))
+
+    return np.array(coloured)
+
+
 def _extract_boxes(canvas_result, scale, image_shape):
     if canvas_result is None or canvas_result.json_data is None:
         return []
@@ -370,6 +407,20 @@ def _hex_to_rgba(color: str, alpha: float):
     g = int(color[2:4], 16)
     b = int(color[4:6], 16)
     return f"rgba({r}, {g}, {b}, {alpha})"
+
+
+def _hex_to_rgb_tuple(color: str | None):
+    if not color:
+        return None
+    color = color.lstrip("#")
+    if len(color) == 3:
+        color = "".join(ch * 2 for ch in color)
+    if len(color) != 6:
+        return None
+    try:
+        return tuple(int(color[i : i + 2], 16) for i in (0, 2, 4))
+    except ValueError:
+        return None
 
 
 def _render_download_button(label: str, image_array: np.ndarray):
