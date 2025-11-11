@@ -1,7 +1,32 @@
 from ultralytics import YOLOv10
-import os
+from pathlib import Path
 # from ultralytics import YOLOWorld
 import torch
+
+
+# Allow ultralytics checkpoints to load under PyTorch 2.6+ safe-loading defaults.
+try:
+    from torch.serialization import add_safe_globals
+    from ultralytics.nn.tasks import DetectionModel, YOLOv10DetectionModel
+    from torch.nn import Sequential
+
+    add_safe_globals([DetectionModel, YOLOv10DetectionModel, Sequential])
+except (ImportError, AttributeError):
+    pass
+
+# PyTorch 2.6+ defaults torch.load(..., weights_only=True); Ultralytics checkpoints
+# store full module objects so we need the legacy behaviour.
+import torch.serialization as _torch_serialization  # noqa: E402
+
+_orig_torch_load = torch.load
+
+
+def _patched_torch_load(*args, **kwargs):
+    kwargs.setdefault("weights_only", False)
+    return _orig_torch_load(*args, **kwargs)
+
+
+torch.load = _patched_torch_load
 
 print(torch.__version__)
 print(torch.version.cuda)
@@ -21,7 +46,7 @@ imgsz = 640
 # otherwise there is numpy error
 # pip install albumentations==1.4
 from ultralytics.data.augment import Albumentations
-from ultralytics.utils import LOGGER, colorstr
+from ultralytics.utils import LOGGER, SETTINGS, colorstr
 
 # def __init__(self, p=1.0):
 #         """Initialize the transform object for YOLO bbox formatted params."""
@@ -52,23 +77,30 @@ from ultralytics.utils import LOGGER, colorstr
 # model = YOLOv10.from_pretrained('jameslahm/yolov10n').to(device)
 # for other usages past here the path to the last training
 
-cur_dir = os.path.dirname(os.path.realpath(__file__))
-model_config = os.path.join(cur_dir, '..', 'yolov10', 'ultralytics', 'cfg', 'models', 'v10', 'yolov10n.yaml')
-model_config = os.path.abspath(model_config)
+cur_dir = Path(__file__).resolve().parent
+repo_root = cur_dir.parent
+SETTINGS.update({"datasets_dir": repo_root.as_posix()})
+
+model_config = (repo_root / 'yolov10' / 'ultralytics' / 'cfg' / 'models' / 'v10' / 'yolov10n.yaml').resolve()
+pretrained_weights = (repo_root / 'weights' / 'yolov10n.pt').resolve()
 print(f"Using model config: {model_config}")
-model = YOLOv10(model_config).to(device)
+if not pretrained_weights.exists():
+    raise FileNotFoundError(f"Pretrained weights not found at {pretrained_weights}. Download them before training.")
+print(f"Loading pretrained weights: {pretrained_weights}")
+# model = YOLOv10(str(pretrained_weights)).to(device)
+checkpoint = repo_root / "runs" / "detect" / "detect7" / "weights" / "last.pt"
+model = YOLOv10(str(checkpoint)).to(device)
 
 
-# results = model.train(data=os.path.join(cur_dir, 'deepscore.yaml'), cfg=os.path.join(cur_dir, 'config.yaml'), augment = True, epochs=50, time=2.0)
+# results = model.train(data=str(cur_dir / 'deepscore.yaml'), cfg=str(cur_dir / 'config.yaml'), augment=True, epochs=50, time=2.0)
 
 results = model.train(
-    data=os.path.join(cur_dir, 'deepscore_sliced.yaml'),
-    cfg=os.path.join(cur_dir, 'config.yaml'),
-    epochs=200,
-    patience=10,
-    fraction=0.001,
-    batch=4,
+    data=str(cur_dir / 'deepscore_sliced.yaml'),
+    # data=str(cur_dir / "deepscore_sliced_debug.yaml"),
+    cfg=str(cur_dir / 'config.yaml'),
     device=device,
+    plots=False,
+    
 )
 
 
