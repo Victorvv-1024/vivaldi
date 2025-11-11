@@ -8,7 +8,8 @@ import torch
 import numpy as np
 import os
 from functools import cmp_to_key
-from typing import List, Optional
+from typing import Dict, List, Optional
+from PIL import Image, ImageDraw, ImageFont
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -45,14 +46,30 @@ def detect_everything(
 
     return result
 
+DEFAULT_COLOR_PALETTE = [
+    "#F94144",
+    "#F8961E",
+    "#F9C74F",
+    "#90BE6D",
+    "#43AA8B",
+    "#577590",
+    "#277DA1",
+    "#9B5DE5",
+    "#F15BB5",
+    "#00BBF9",
+]
+
+
 def visualize_predictions(
-    image: np.array, 
+    image: np.array,
     predictions_list,
-    filter = None,
+    filter=None,
     text_size: float = None,
     rect_th: int = None,
     hide_labels: bool = False,
-    hide_conf: bool = False
+    hide_conf: bool = False,
+    class_colors: Optional[Dict[str, str]] = None,
+    fill_alpha: float = 0.25,
 ):
     """visualize image 
 
@@ -71,6 +88,18 @@ def visualize_predictions(
     if filter:
         predictions_list = filter_predictions(predictions_list, filter)
 
+    if class_colors:
+        return _visualize_with_custom_colors(
+            image,
+            predictions_list,
+            class_colors,
+            text_size=text_size,
+            rect_th=rect_th,
+            hide_labels=hide_labels,
+            hide_conf=hide_conf,
+            fill_alpha=fill_alpha,
+        )
+
     im_with_det = visualize_object_predictions(
         image=np.ascontiguousarray(image),
         object_prediction_list=predictions_list,
@@ -79,9 +108,9 @@ def visualize_predictions(
         text_th=None,
         color=None,
         hide_labels=hide_labels,
-        hide_conf=hide_conf
+        hide_conf=hide_conf,
     )
-    
+
     return im_with_det["image"]
 
 def filter_predictions(prediction_list, classes_to_view):
@@ -143,11 +172,17 @@ def transform_prediction(prediction: ObjectPrediction, slice_bbox: List[int]):
     # prediction.bbox.maxy = prediction.bbox.maxy - slice_bbox[1]    
     bbox = prediction.bbox
     # construct a new bbox object
+    shift_y = slice_bbox[1]
+    miny = bbox.miny - shift_y
+    maxy = bbox.maxy - shift_y
+    # guard against negative coordinates introduced by slicing near the image edge
+    miny = max(miny, 0)
+    maxy = max(maxy, miny)
     new_bbox = BoundingBox(
         [bbox.minx,
-        bbox.miny - slice_bbox[1],
+        miny,
         bbox.maxx,
-        bbox.maxy - slice_bbox[1]]
+        maxy]
     )
     prediction.bbox = new_bbox
 
@@ -194,3 +229,97 @@ def slice_image(predicted_image: PredictionResult, divider:str):
                 slice_objects.append(object)
         sliced_images.append({'image': np.asarray(predicted_image.image)[tly:bry, tlx:brx], 'predictions': slice_objects})
     return sliced_images
+
+
+def _visualize_with_custom_colors(
+    image: np.ndarray,
+    prediction_list,
+    class_colors: Dict[str, str],
+    text_size: Optional[float],
+    rect_th: Optional[int],
+    hide_labels: bool,
+    hide_conf: bool,
+    fill_alpha: float,
+):
+    if not prediction_list:
+        return image
+
+    base_image = Image.fromarray(np.ascontiguousarray(image)).convert("RGBA")
+    overlay = Image.new("RGBA", base_image.size, (0, 0, 0, 0))
+    overlay_draw = ImageDraw.Draw(overlay)
+    outline_width = rect_th if rect_th else 2
+
+    for prediction in prediction_list:
+        color = _color_for_class(prediction.category.name, class_colors)
+        x1, y1, x2, y2 = map(int, prediction.bbox.to_xyxy())
+        fill = (*color, int(255 * np.clip(fill_alpha, 0, 1)))
+        overlay_draw.rectangle([x1, y1, x2, y2], fill=fill)
+
+    composed = Image.alpha_composite(base_image, overlay)
+    draw = ImageDraw.Draw(composed)
+    font = _resolve_font(composed.size, text_size)
+
+    for prediction in prediction_list:
+        color = _color_for_class(prediction.category.name, class_colors)
+        x1, y1, x2, y2 = map(int, prediction.bbox.to_xyxy())
+        draw.rectangle([x1, y1, x2, y2], outline=(*color, 255), width=outline_width)
+
+        if not hide_labels:
+            label = prediction.category.name
+            if not hide_conf:
+                label = f"{label} {prediction.score.value:.2f}"
+            text_w, text_h = _measure_text(draw, label, font)
+            text_x1 = x1
+            text_y1 = max(y1 - text_h - 4, 0)
+            text_bg = [text_x1, text_y1, text_x1 + text_w + 4, text_y1 + text_h + 4]
+            draw.rectangle(text_bg, fill=(*color, 220))
+            draw.text(
+                (text_x1 + 2, text_y1 + 2),
+                label,
+                fill=(255, 255, 255, 255),
+                font=font,
+            )
+
+    return np.array(composed.convert("RGB"))
+
+
+def _color_for_class(class_name: str, class_colors: Dict[str, str]):
+    if class_colors and class_name in class_colors:
+        return _hex_to_rgb(class_colors[class_name])
+    palette_index = abs(hash(class_name)) % len(DEFAULT_COLOR_PALETTE)
+    return _hex_to_rgb(DEFAULT_COLOR_PALETTE[palette_index])
+
+
+def _hex_to_rgb(value: str):
+    if isinstance(value, (tuple, list)):
+        if len(value) >= 3:
+            return tuple(int(v) for v in value[:3])
+    if not isinstance(value, str):
+        return (255, 255, 255)
+
+    value = value.strip().lstrip("#")
+    if len(value) == 3:
+        value = "".join(ch * 2 for ch in value)
+    if len(value) != 6:
+        return (255, 255, 255)
+    r = int(value[0:2], 16)
+    g = int(value[2:4], 16)
+    b = int(value[4:6], 16)
+    return (r, g, b)
+
+
+def _resolve_font(image_size, text_size: Optional[float]):
+    base = int(min(image_size) / 30)
+    if text_size:
+        base = max(int(20 * text_size), 10)
+    try:
+        return ImageFont.truetype("DejaVuSans.ttf", size=base)
+    except IOError:
+        return ImageFont.load_default()
+
+
+def _measure_text(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.ImageFont):
+    if hasattr(draw, "textbbox"):
+        bbox = draw.textbbox((0, 0), text, font=font)
+        return bbox[2] - bbox[0], bbox[3] - bbox[1]
+    return draw.textsize(text, font=font)

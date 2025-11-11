@@ -1,6 +1,8 @@
 from PIL import Image
 import numpy as np
 import os
+import io
+from typing import List, Tuple
 from pdf2image import convert_from_path, convert_from_bytes
 
 
@@ -13,14 +15,30 @@ def load_test_image():
     return test_image
 
 def get_photo(file, key):
-    bytes_data = file.getvalue()
-    file_type = file.type.split('/')[-1]
-    if file_type=='pdf':
-        #TODO add multiple pages    
-        img_file = convert_from_bytes(bytes_data)[0]
-    else:
-         img_file = Image.open(file)
-    # convert PIL Image to numpy array:
-    notes_image = np.array(img_file)
+    images, _ = load_uploaded_file(file)
+    if not images:
+        raise ValueError("Unable to decode uploaded file.")
+    # Preserve previous behaviour by returning only the first page/image
+    return images[0]
 
-    return notes_image
+
+def load_uploaded_file(file) -> Tuple[List[np.ndarray], List[str]]:
+    """Convert an uploaded (potentially multi-page) file into numpy images.
+
+    Returns:
+        Tuple[List[np.ndarray], List[str]]: list of images and human readable labels
+            (useful for Streamlit display when a PDF yields multiple pages).
+    """
+    bytes_data = file.getvalue()
+    file_suffix = os.path.splitext(file.name)[1].lower()
+    mime_subtype = file.type.split('/')[-1].lower()
+
+    if file_suffix == '.pdf' or mime_subtype == 'pdf':
+        pil_images = convert_from_bytes(bytes_data)
+        labels = [f"{file.name} - page {idx + 1}" for idx in range(len(pil_images))]
+    else:
+        pil_images = [Image.open(io.BytesIO(bytes_data))]
+        labels = [file.name]
+
+    numpy_images = [np.array(img.convert("RGB")) for img in pil_images]
+    return numpy_images, labels
