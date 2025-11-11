@@ -11,10 +11,48 @@ from sahi.prediction import ObjectPrediction
 try:
     from streamlit.elements import image as _st_image_mod
     from streamlit.elements.lib import image_utils as _st_image_utils
+    from streamlit.elements.lib.layout_utils import LayoutConfig
 
-    for attr in ("image_to_url", "AtomicImage", "ImageFormatOrAuto"):
+    _new_image_to_url = getattr(_st_image_utils, "image_to_url", None)
+
+    def _image_to_url_compat(*args, **kwargs):
+        """Shim to accept both legacy (width, clamp, ...) and new LayoutConfig signatures."""
+        if _new_image_to_url is None or not args:
+            raise AttributeError("streamlit image_to_url is not available.")
+
+        if len(args) >= 2 and isinstance(args[1], LayoutConfig):
+            return _new_image_to_url(*args, **kwargs)
+
+        image = args[0]
+        width = args[1] if len(args) > 1 else None
+        clamp = args[2] if len(args) > 2 else True
+        channels = args[3] if len(args) > 3 else "RGB"
+        output_format = args[4] if len(args) > 4 else "auto"
+        image_id = (
+            kwargs.pop("image_id", None)
+            or kwargs.pop("key", None)
+            or f"legacy-{id(image)}"
+        )
+
+        layout_width = (
+            width if isinstance(width, (int, float)) and width > 0 else "content"
+        )
+        layout_config = LayoutConfig(width=layout_width)
+
+        return _new_image_to_url(
+            image,
+            layout_config,
+            clamp,
+            channels,
+            output_format,
+            image_id,
+        )
+
+    for attr in ("AtomicImage", "ImageFormatOrAuto"):
         if hasattr(_st_image_utils, attr) and not hasattr(_st_image_mod, attr):
             setattr(_st_image_mod, attr, getattr(_st_image_utils, attr))
+
+    setattr(_st_image_mod, "image_to_url", _image_to_url_compat)
 except Exception:
     pass
 
