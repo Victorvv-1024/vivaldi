@@ -57,13 +57,12 @@ def debug_tile_predictions(
         tile_result = get_prediction(
             tile_image,
             detection_model,
-            shift_amount=[offset_x, offset_y],
-            full_shape=[img_h, img_w],
+            shift_amount=[0, 0],
+            full_shape=[tile_image.shape[0], tile_image.shape[1]],
         )
-        local_predictions = _convert_to_local(tile_result.object_prediction_list, offset_x, offset_y, tile_image.shape[:2])
         per_tile.append({
             "image": tile_image,
-            "predictions": local_predictions,
+            "predictions": tile_result.object_prediction_list,
         })
     return per_tile
 
@@ -250,33 +249,6 @@ def slice_image(predicted_image: PredictionResult, divider:str):
                 slice_objects.append(object)
         sliced_images.append({'image': np.asarray(predicted_image.image)[tly:bry, tlx:brx], 'predictions': slice_objects})
     return sliced_images
-
-
-def _convert_to_local(
-    predictions: List[ObjectPrediction],
-    shift_x: int,
-    shift_y: int,
-    tile_shape: Tuple[int, int],
-) -> List[ObjectPrediction]:
-    height, width = tile_shape
-    local_predictions: List[ObjectPrediction] = []
-    for obj in predictions:
-        bbox = obj.bbox
-        minx = max(0, bbox.minx - shift_x)
-        miny = max(0, bbox.miny - shift_y)
-        maxx = min(width, bbox.maxx - shift_x)
-        maxy = min(height, bbox.maxy - shift_y)
-        if maxx <= minx or maxy <= miny:
-            continue
-        local_predictions.append(
-            ObjectPrediction(
-                bbox=[minx, miny, maxx, maxy],
-                category_id=obj.category.id,
-                category_name=obj.category.name,
-                score=obj.score.value,
-            )
-        )
-    return local_predictions
 
 
 def _generate_tiles(
