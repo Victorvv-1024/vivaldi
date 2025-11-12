@@ -458,7 +458,7 @@ def _hex_to_rgba(color: str, alpha: float):
     return f"rgba({r}, {g}, {b}, {alpha})"
 
 
-def _hex_to_rgb_tuple(color: str | None):
+def _hex_to_rgb_tuple(color: Optional[str]):
     if not color:
         return None
     color = color.lstrip("#")
