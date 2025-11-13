@@ -62,6 +62,7 @@ from streamlit_drawable_canvas import st_canvas
 import scanner.detection as detector
 import scanner.utils as utils
 from scanner.detection import DEFAULT_COLOR_PALETTE
+from scanner import note_parser
 
 IGNORE_COLOR_CLASSES = {"staff"}
 
@@ -201,6 +202,7 @@ def show_results(display_opts):
         image_array = np.asarray(prediction.image)
         manual_predictions = _manual_predictions(entry["label"])
         combined_predictions = list(prediction.object_prediction_list) + manual_predictions
+        inferred_notes = note_parser.infer_notes(combined_predictions)
         colored = _generate_colored_sheet(
             image_array,
             combined_predictions,
@@ -225,6 +227,7 @@ def show_results(display_opts):
             st.image(overlay, use_container_width=True, caption="Detection overlay")
         if display_opts.get("show_tiles"):
             _render_tile_debug(entry["label"], image_array, color_map)
+        _render_note_table(inferred_notes)
         _render_annotation_panel(entry, color_map)
         _show_class_counts(prediction.object_prediction_list)
         st.divider()
@@ -366,6 +369,21 @@ def _render_annotation_panel(entry, color_map):
                 st.info("Cleared manual annotations for this page.")
 
 
+def _render_note_table(notes: List[note_parser.NoteEvent]):
+    if not notes:
+        return
+    data = [
+        {
+            "Note": n.label,
+            "Staff": n.staff_index + 1,
+            "Category": n.symbol_category,
+            "Confidence": f"{n.confidence:.2f}",
+        }
+        for n in notes
+    ]
+    st.dataframe(data, hide_index=True, use_container_width=True)
+
+
 def _render_tile_debug(label: str, image_array: np.ndarray, color_map: Optional[Dict[str, str]]):
     tiles = detector.debug_tile_predictions(image_array)
     if not tiles:
@@ -376,7 +394,7 @@ def _render_tile_debug(label: str, image_array: np.ndarray, color_map: Optional[
                 tile["image"],
                 tile["predictions"],
                 class_colors=color_map,
-                hide_labels=True,
+                hide_labels=False,
                 hide_conf=True,
                 rect_th=2,
                 fill_alpha=0.25,
