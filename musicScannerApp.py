@@ -64,8 +64,6 @@ import scanner.utils as utils
 from scanner.detection import DEFAULT_COLOR_PALETTE
 from scanner import note_parser
 
-IGNORE_COLOR_CLASSES = {"staff"}
-
 st.set_page_config(
     page_title="Music sheet scanner",
     layout="wide",
@@ -94,6 +92,8 @@ def init_state():
         st.session_state.manual_annotations = {}
     if "colored_outputs" not in st.session_state:
         st.session_state.colored_outputs = {}
+    if "note_colors" not in st.session_state:
+        st.session_state.note_colors = {}
 
 
 def decode_uploads(files) -> List[Dict]:
@@ -195,6 +195,7 @@ def show_results(display_opts):
 
     st.subheader("3. Colour-enhanced sheets")
     color_map = st.session_state.class_colors or None
+    note_colors = st.session_state.note_colors
     st.session_state.colored_outputs = {}
     download_candidates = []
     for entry in st.session_state.pages:
@@ -203,10 +204,11 @@ def show_results(display_opts):
         manual_predictions = _manual_predictions(entry["label"])
         combined_predictions = list(prediction.object_prediction_list) + manual_predictions
         inferred_notes = note_parser.infer_notes(combined_predictions)
+        _update_note_colors(note_colors, inferred_notes)
         colored = _generate_colored_sheet(
             image_array,
-            combined_predictions,
-            color_map,
+            inferred_notes,
+            note_colors,
             display_opts["fill_alpha"],
         )
         st.markdown(f"**{entry['label']}**")
@@ -227,7 +229,7 @@ def show_results(display_opts):
             st.image(overlay, use_container_width=True, caption="Detection overlay")
         if display_opts.get("show_tiles"):
             _render_tile_debug(entry["label"], image_array, color_map)
-        _render_note_table(inferred_notes)
+        _render_note_table(inferred_notes, note_colors)
         _render_annotation_panel(entry, color_map)
         _show_class_counts(prediction.object_prediction_list)
         st.divider()
@@ -369,7 +371,7 @@ def _render_annotation_panel(entry, color_map):
                 st.info("Cleared manual annotations for this page.")
 
 
-def _render_note_table(notes: List[note_parser.NoteEvent]):
+def _render_note_table(notes: List[note_parser.NoteEvent], note_colors: Dict[str, str]):
     if not notes:
         return
     data = [
@@ -377,6 +379,7 @@ def _render_note_table(notes: List[note_parser.NoteEvent]):
             "Note": n.label,
             "Staff": n.staff_index + 1,
             "Category": n.symbol_category,
+            "Colour": note_colors.get(n.label, ""),
             "Confidence": f"{n.confidence:.2f}",
         }
         for n in notes
@@ -402,13 +405,23 @@ def _render_tile_debug(label: str, image_array: np.ndarray, color_map: Optional[
             st.image(vis, use_container_width=True, caption=f"Tile {idx}")
 
 
+def _update_note_colors(note_color_map: Dict[str, str], notes: List[note_parser.NoteEvent]):
+    if not notes:
+        return
+    palette = DEFAULT_COLOR_PALETTE
+    for note in notes:
+        if note.label not in note_color_map:
+            idx = len(note_color_map)
+            note_color_map[note.label] = palette[idx % len(palette)]
+
+
 def _generate_colored_sheet(
     image_array: np.ndarray,
-    predictions,
-    color_map: Optional[Dict[str, str]],
+    note_events: List[note_parser.NoteEvent],
+    note_colors: Dict[str, str],
     alpha: float,
 ) -> np.ndarray:
-    if color_map is None or not predictions:
+    if not note_events:
         return image_array
 
     alpha = float(min(max(alpha, 0.0), 1.0))
@@ -417,13 +430,11 @@ def _generate_colored_sheet(
 
     kernel = np.ones((3, 3), np.uint8)
 
-    for prediction in predictions:
-        if prediction.category.name and prediction.category.name.lower() in IGNORE_COLOR_CLASSES:
-            continue
-        color = _hex_to_rgb_tuple(color_map.get(prediction.category.name))
+    for note in note_events:
+        color = _hex_to_rgb_tuple(note_colors.get(note.label))
         if color is None:
             continue
-        x1, y1, x2, y2 = map(int, prediction.bbox.to_xyxy())
+        x1, y1, x2, y2 = map(int, note.bbox)
         if x2 <= x1 or y2 <= y1:
             continue
 
