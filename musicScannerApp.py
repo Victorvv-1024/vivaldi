@@ -5,7 +5,7 @@ import re
 
 import numpy as np
 import streamlit as st
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 import cv2
 from sahi.prediction import ObjectPrediction
 
@@ -471,7 +471,7 @@ def _visualize_note_overlay(
         return image_array
     base = Image.fromarray(image_array).convert("RGB")
     draw = ImageDraw.Draw(base)
-    font = _resolve_font(base.size, text_size=0.5)
+    font = _get_overlay_font(base.size, 0.6)
     for note in note_events:
         color = note_colors.get(note.label, "#FF00FF")
         rgb = _hex_to_rgb_tuple(color)
@@ -481,6 +481,15 @@ def _visualize_note_overlay(
         draw.rectangle([x1, y1, x2, y2], outline=rgb, width=2)
         draw.text((x1, max(0, y1 - 12)), note.label, fill=rgb, font=font)
     return np.array(base)
+
+
+def _get_overlay_font(image_size, scale: float):
+    base = int(min(image_size) / 40)
+    size = max(int(base * scale), 10)
+    try:
+        return ImageFont.truetype("DejaVuSans.ttf", size=size)
+    except IOError:
+        return ImageFont.load_default()
 
 
 def _generate_colored_sheet(
