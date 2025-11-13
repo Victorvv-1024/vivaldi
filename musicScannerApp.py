@@ -1,6 +1,7 @@
 from collections import Counter
 from io import BytesIO
 from typing import Dict, List, Optional, Tuple
+import re
 
 import numpy as np
 import streamlit as st
@@ -148,6 +149,7 @@ def ensure_predictions(files):
     st.session_state.class_colors = seed_color_map(
         merged_classes, st.session_state.class_colors
     )
+    st.session_state.note_colors = {}
     st.session_state.last_signature = signature
 
 
@@ -204,10 +206,12 @@ def show_results(display_opts):
         manual_predictions = _manual_predictions(entry["label"])
         combined_predictions = list(prediction.object_prediction_list) + manual_predictions
         inferred_notes = note_parser.infer_notes(combined_predictions)
-        _update_note_colors(note_colors, inferred_notes)
+        manual_note_events = _manual_note_events(entry["label"])
+        all_notes = inferred_notes + manual_note_events
+        _update_note_colors(note_colors, all_notes)
         colored = _generate_colored_sheet(
             image_array,
-            inferred_notes,
+            all_notes,
             note_colors,
             display_opts["fill_alpha"],
         )
@@ -217,19 +221,15 @@ def show_results(display_opts):
         download_candidates.append((entry["label"], colored))
         _render_download_button(entry["label"], colored)
         if display_opts["show_overlay"]:
-            overlay = detector.visualize_predictions(
-                colored,
-                combined_predictions,
-                class_colors=color_map,
-                hide_labels=not display_opts["show_labels"],
-                hide_conf=True,
-                rect_th=2,
-                fill_alpha=display_opts["fill_alpha"],
+            overlay = _visualize_note_overlay(
+                image_array,
+                all_notes,
+                note_colors,
             )
-            st.image(overlay, use_container_width=True, caption="Detection overlay")
+            st.image(overlay, use_container_width=True, caption="Note overlay")
         if display_opts.get("show_tiles"):
             _render_tile_debug(entry["label"], image_array, color_map)
-        _render_note_table(inferred_notes, note_colors)
+        _render_note_table(all_notes, note_colors)
         _render_annotation_panel(entry, color_map)
         _show_class_counts(prediction.object_prediction_list)
         st.divider()
@@ -296,6 +296,32 @@ def _manual_predictions(page_label: str) -> List[ObjectPrediction]:
     return manual_objs
 
 
+def _manual_note_events(page_label: str) -> List[note_parser.NoteEvent]:
+    annotations = st.session_state.manual_annotations.get(page_label, [])
+    manual_notes: List[note_parser.NoteEvent] = []
+    for item in annotations:
+        label = item.get("note_label", "").strip()
+        if not label:
+            continue
+        parsed = _parse_manual_note_label(label)
+        if not parsed:
+            continue
+        name, accidental, octave = parsed
+        x1, y1, x2, y2 = item["bbox"]
+        manual_notes.append(
+            note_parser.NoteEvent(
+                name=name,
+                octave=octave,
+                accidental=accidental,
+                staff_index=-1,
+                bbox=(x1, y1, x2, y2),
+                confidence=1.0,
+                symbol_category="manual",
+            )
+        )
+    return manual_notes
+
+
 def _render_annotation_panel(entry, color_map):
     label = entry["label"]
     image_array = np.asarray(entry["prediction"].image)
@@ -314,6 +340,10 @@ def _render_annotation_panel(entry, color_map):
         )
         selected_color = st.color_picker(
             "Annotation colour", value=default_color, key=f"class_color_{label}"
+        )
+
+        manual_note_label = st.text_input(
+            "Manual note label (e.g., C#4)", key=f"manual_note_label_{label}"
         )
 
         canvas_width = min(900, image_array.shape[1])
@@ -339,10 +369,16 @@ def _render_annotation_panel(entry, color_map):
             if not boxes:
                 st.warning("Draw at least one rectangle before saving.")
             else:
-                additions = [
-                    {"bbox": bbox, "category": selected_class, "color": selected_color}
-                    for bbox in boxes
-                ]
+                additions = []
+                for bbox in boxes:
+                    additions.append(
+                        {
+                            "bbox": bbox,
+                            "category": selected_class,
+                            "color": selected_color,
+                            "note_label": manual_note_label.strip(),
+                        }
+                    )
                 st.session_state.manual_annotations[label].extend(additions)
                 if selected_class not in st.session_state.class_names:
                     st.session_state.class_names.append(selected_class)
@@ -356,6 +392,7 @@ def _render_annotation_panel(entry, color_map):
                 [
                     {
                         "Category": ann["category"],
+                        "Note": ann.get("note_label", ""),
                         "x1": int(ann["bbox"][0]),
                         "y1": int(ann["bbox"][1]),
                         "x2": int(ann["bbox"][2]),
@@ -413,6 +450,37 @@ def _update_note_colors(note_color_map: Dict[str, str], notes: List[note_parser.
         if note.label not in note_color_map:
             idx = len(note_color_map)
             note_color_map[note.label] = palette[idx % len(palette)]
+
+
+def _parse_manual_note_label(label: str):
+    match = re.match(r"([A-Ga-g])([#bxn]?)(-?\\d)", label)
+    if not match:
+        return None
+    letter = match.group(1).upper()
+    accidental = match.group(2)
+    octave = int(match.group(3))
+    return letter, accidental, octave
+
+
+def _visualize_note_overlay(
+    image_array: np.ndarray,
+    note_events: List[note_parser.NoteEvent],
+    note_colors: Dict[str, str],
+) -> np.ndarray:
+    if not note_events:
+        return image_array
+    base = Image.fromarray(image_array).convert("RGB")
+    draw = ImageDraw.Draw(base)
+    font = _resolve_font(base.size, text_size=0.5)
+    for note in note_events:
+        color = note_colors.get(note.label, "#FF00FF")
+        rgb = _hex_to_rgb_tuple(color)
+        if rgb is None:
+            continue
+        x1, y1, x2, y2 = map(int, note.bbox)
+        draw.rectangle([x1, y1, x2, y2], outline=rgb, width=2)
+        draw.text((x1, max(0, y1 - 12)), note.label, fill=rgb, font=font)
+    return np.array(base)
 
 
 def _generate_colored_sheet(
