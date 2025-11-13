@@ -357,7 +357,7 @@ def _render_annotation_panel(entry, color_map):
             background_image=Image.fromarray(image_array).resize(
                 (canvas_width, canvas_height)
             ),
-            update_streamlit=False,
+            update_streamlit=True,
             height=canvas_height,
             width=canvas_width,
             drawing_mode="rect",
