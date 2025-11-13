@@ -156,37 +156,33 @@ def ensure_predictions(files):
 
 
 def build_color_sidebar():
-    st.sidebar.header("2. Choose colours")
-    if not st.session_state.class_names:
-        st.sidebar.info("Upload a score to see the detected classes.")
-        return {"fill_alpha": 0.25, "show_labels": False}
-
-    _render_custom_class_form()
-
+    st.sidebar.header("2. Visual settings")
     opacity = st.sidebar.slider(
         "Fill opacity", min_value=0.05, max_value=0.9, value=0.35, step=0.05
     )
     show_overlay = st.sidebar.checkbox(
-        "Show detection overlay", value=False,
-        help="Display bounding boxes for debugging."
+        "Show detection overlay",
+        value=False,
+        help="Display inferred note boxes for debugging.",
     )
     show_tiles = st.sidebar.checkbox(
-        "Show sliced tiles", value=False,
-        help="Visualize the 640×640 tiles sent to the detector."
-    )
-    show_labels = st.sidebar.checkbox(
-        "Show category labels on sheet", value=False, help="Adds text boxes per symbol."
+        "Show sliced tiles",
+        value=False,
+        help="Visualize the 640×640 tiles sent to the detector.",
     )
 
-    updated_colors = {}
-    for cls in st.session_state.class_names:
-        default_color = st.session_state.class_colors.get(cls, DEFAULT_COLOR_PALETTE[0])
-        updated_colors[cls] = st.sidebar.color_picker(cls, default_color)
+    with st.sidebar.expander("Note colours", expanded=True):
+        note_colors = st.session_state.note_colors
+        if not note_colors:
+            st.caption("Colours will appear after detection.")
+        else:
+            for note, color in sorted(note_colors.items()):
+                note_colors[note] = st.color_picker(
+                    note, color, key=f"note_color_picker_{note}"
+                )
 
-    st.session_state.class_colors = updated_colors
     return {
         "fill_alpha": opacity,
-        "show_labels": show_labels,
         "show_overlay": show_overlay,
         "show_tiles": show_tiles,
     }
@@ -205,8 +201,7 @@ def show_results(display_opts):
     for entry in st.session_state.pages:
         prediction = entry["prediction"]
         image_array = np.asarray(prediction.image)
-        manual_predictions = _manual_predictions(entry["label"])
-        combined_predictions = list(prediction.object_prediction_list) + manual_predictions
+        combined_predictions = list(prediction.object_prediction_list)
         inferred_notes = note_parser.infer_notes(combined_predictions)
         manual_note_events = _manual_note_events(entry["label"])
         all_notes = inferred_notes + manual_note_events
@@ -232,7 +227,7 @@ def show_results(display_opts):
         if display_opts.get("show_tiles"):
             _render_tile_debug(entry["label"], image_array, color_map)
         _render_note_table(all_notes, note_colors)
-        _render_annotation_panel(entry, color_map)
+        _render_annotation_panel(entry)
         _show_class_counts(prediction.object_prediction_list)
         st.divider()
 
@@ -266,38 +261,6 @@ def main():
     show_results(display_opts)
 
 
-def _render_custom_class_form():
-    with st.sidebar.expander("Add custom symbol category"):
-        new_label = st.text_input("Label", key="new_class_label")
-        new_color = st.color_picker("Colour", value="#ff66c4", key="new_class_color")
-        submitted = st.button("Add category", key="add_class_btn")
-        if submitted:
-            label = new_label.strip()
-            if not label:
-                st.warning("Please enter a label for the category.")
-            elif label in st.session_state.class_names:
-                st.info("Category already exists.")
-            else:
-                st.session_state.class_names.append(label)
-                st.session_state.class_colors[label] = new_color
-                st.success(f"Added category '{label}'.")
-
-
-def _manual_predictions(page_label: str) -> List[ObjectPrediction]:
-    annotations = st.session_state.manual_annotations.get(page_label, [])
-    manual_objs = []
-    for idx, item in enumerate(annotations):
-        manual_objs.append(
-            ObjectPrediction(
-                bbox=item["bbox"],
-                category_id=-1,
-                category_name=item["category"],
-                score=1.0,
-            )
-        )
-    return manual_objs
-
-
 def _manual_note_events(page_label: str) -> List[note_parser.NoteEvent]:
     annotations = st.session_state.manual_annotations.get(page_label, [])
     manual_notes: List[note_parser.NoteEvent] = []
@@ -324,31 +287,20 @@ def _manual_note_events(page_label: str) -> List[note_parser.NoteEvent]:
     return manual_notes
 
 
-def _render_annotation_panel(entry, color_map):
+def _render_annotation_panel(entry):
     label = entry["label"]
     image_array = np.asarray(entry["prediction"].image)
     if label not in st.session_state.manual_annotations:
         st.session_state.manual_annotations[label] = []
 
     with st.expander(f"Add or edit symbols for {label}"):
-        available_classes = st.session_state.class_names or ["custom"]
-        selected_class = st.selectbox(
-            "Category", available_classes, key=f"class_select_{label}"
-        )
-        session_colors = st.session_state.class_colors
-        default_color = session_colors.get(
-            selected_class,
-            (color_map or {}).get(selected_class, "#ffaa00"),
-        )
-        selected_color = st.color_picker(
-            "Annotation colour", value=default_color, key=f"class_color_{label}"
-        )
-
         manual_note_label = st.text_input(
             "Manual note label (e.g., C#4)", key=f"manual_note_label_{label}"
         )
 
-        st.caption("Drag on the canvas to draw rectangles. Shapes persist automatically; click 'Save drawn boxes' to store them.")
+        st.caption(
+            "Drag on the canvas to draw rectangles. Shapes persist automatically; click 'Save drawn boxes' to store them."
+        )
 
         canvas_width = min(900, image_array.shape[1])
         scale = canvas_width / image_array.shape[1]
@@ -356,9 +308,9 @@ def _render_annotation_panel(entry, color_map):
         canvas_key = f"canvas_{label}"
         initial_drawing = st.session_state.canvas_data.get(canvas_key)
         canvas_result = st_canvas(
-            fill_color=_hex_to_rgba(selected_color, 0.35),
+            fill_color="rgba(255, 0, 0, 0.3)",
             stroke_width=2,
-            stroke_color=selected_color,
+            stroke_color="#ff0000",
             background_color="#ffffff",
             background_image=Image.fromarray(image_array).resize(
                 (canvas_width, canvas_height)
@@ -380,29 +332,25 @@ def _render_annotation_panel(entry, color_map):
             if not boxes:
                 st.warning("Draw at least one rectangle before saving.")
             else:
-                additions = []
-                for bbox in boxes:
-                    additions.append(
-                        {
-                            "bbox": bbox,
-                            "category": selected_class,
-                            "color": selected_color,
-                            "note_label": manual_note_label.strip(),
-                        }
-                    )
-                st.session_state.manual_annotations[label].extend(additions)
-                if selected_class not in st.session_state.class_names:
-                    st.session_state.class_names.append(selected_class)
-                if selected_class not in st.session_state.class_colors:
-                    st.session_state.class_colors[selected_class] = selected_color
-                st.success(f"Added {len(additions)} boxes for {selected_class}.")
+                if not manual_note_label.strip():
+                    st.warning("Please enter a note label before saving.")
+                else:
+                    additions = []
+                    for bbox in boxes:
+                        additions.append(
+                            {
+                                "bbox": bbox,
+                                "note_label": manual_note_label.strip(),
+                            }
+                        )
+                    st.session_state.manual_annotations[label].extend(additions)
+                    st.success(f"Added {len(additions)} boxes.")
 
         if st.session_state.manual_annotations[label]:
             st.caption("Saved manual annotations")
             st.dataframe(
                 [
                     {
-                        "Category": ann["category"],
                         "Note": ann.get("note_label", ""),
                         "x1": int(ann["bbox"][0]),
                         "y1": int(ann["bbox"][1]),
