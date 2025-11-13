@@ -95,6 +95,8 @@ def init_state():
         st.session_state.colored_outputs = {}
     if "note_colors" not in st.session_state:
         st.session_state.note_colors = {}
+    if "canvas_data" not in st.session_state:
+        st.session_state.canvas_data = {}
 
 
 def decode_uploads(files) -> List[Dict]:
@@ -346,9 +348,13 @@ def _render_annotation_panel(entry, color_map):
             "Manual note label (e.g., C#4)", key=f"manual_note_label_{label}"
         )
 
+        st.caption("Drag on the canvas to draw rectangles. Shapes persist automatically; click 'Save drawn boxes' to store them.")
+
         canvas_width = min(900, image_array.shape[1])
         scale = canvas_width / image_array.shape[1]
         canvas_height = int(image_array.shape[0] * scale)
+        canvas_key = f"canvas_{label}"
+        initial_drawing = st.session_state.canvas_data.get(canvas_key)
         canvas_result = st_canvas(
             fill_color=_hex_to_rgba(selected_color, 0.35),
             stroke_width=2,
@@ -361,8 +367,12 @@ def _render_annotation_panel(entry, color_map):
             height=canvas_height,
             width=canvas_width,
             drawing_mode="rect",
-            key=f"canvas_{label}",
+            initial_drawing=initial_drawing,
+            key=canvas_key,
         )
+
+        if canvas_result.json_data is not None:
+            st.session_state.canvas_data[canvas_key] = canvas_result.json_data
 
         if st.button("Save drawn boxes", key=f"save_boxes_{label}"):
             boxes = _extract_boxes(canvas_result, scale, image_array.shape)
