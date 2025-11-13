@@ -5,7 +5,7 @@ import re
 
 import numpy as np
 import streamlit as st
-from PIL import Image
+from PIL import Image, ImageDraw
 import cv2
 from sahi.prediction import ObjectPrediction
 
