@@ -368,6 +368,7 @@ def _render_annotation_panel(entry, color_map):
             width=canvas_width,
             drawing_mode="rect",
             initial_drawing=initial_drawing,
+            display_toolbar=False,
             key=canvas_key,
         )
 
